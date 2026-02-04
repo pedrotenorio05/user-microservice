@@ -1,0 +1,41 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  GESTOR
+  OPERADOR
+}
+
+enum UserStatus {
+  PENDING_PASSWORD // senha pendente
+  ACTIVE           // conta ativa 
+  INACTIVE         // conta inativa
+}
+
+model User {
+  id            String     @id @default(uuid())
+  name          String
+  cpf           String     @unique 
+  email         String     @unique 
+  phone         String    
+  password      String?    
+  role          UserRole   
+  status        UserStatus @default(PENDING_PASSWORD) 
+  secretary     String?    
+  activationToken String? 
+  tokenExpiresAt  DateTime? 
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  deletedAt     DateTime? 
+  inactivatedAt   DateTime?
+  inactivatedById String?
+
+  @@map("users")
+}
