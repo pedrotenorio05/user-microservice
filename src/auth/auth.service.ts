@@ -1,104 +1,78 @@
 import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
-import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { UserStatus } from '@prisma/client';
 import { ActivateAccountDto } from './dto/activate-account.dto';
 
+// Interface interna para tipar o retorno do validateUser
+interface ValidatedUser {
+  id: string;
+  role: string;
+  [key: string]: any;
+}
+
 @Injectable()
 export class AuthService {
-  constructor(
-    private usersService: UsersService,
-    private jwtService: JwtService,
-  ) {}
+  constructor(private usersService: UsersService) {}
 
-  async validateUser(email: string, pass: string): Promise<any> {
+  async validateUser(email: string, pass: string): Promise<ValidatedUser | null> {
     const user = await this.usersService.findByEmail(email);
 
-    // 1. Usuário existe?
-    if (!user) return null;
+    // Prevenção de Timing Attack
+    const dummyHash = '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWrn3ILAWOiP.k.s3.s3.s3.s3.s3.'; 
+    const storedPassword = user?.password || dummyHash;
 
-    // 2. Usuário tem senha?
-    if (!user.password) return null; 
+    const isPasswordValid = await bcrypt.compare(pass, storedPassword);
 
-    // 3. A senha bate?
-    const isPasswordValid = await bcrypt.compare(pass, user.password);
-    
-    if (user && isPasswordValid) {
-      
-      // 4. Status bloqueia acesso?
-      if (user.status !== UserStatus.ACTIVE) {
-        throw new UnauthorizedException('Usuário inativo ou pendente de ativação.');
-      }
-
-      const { password, ...result } = user;
-      return result;
+    if (!user || !isPasswordValid) {
+      return null;
     }
-    return null;
+
+    if (user.status !== UserStatus.ACTIVE) {
+      throw new UnauthorizedException('Usuário inativo ou pendente de ativação.');
+    }
+
+    // Removemos dados sensíveis antes de retornar
+    const { password, activationToken, ...result } = user as any; 
+    return result;
   }
-
-  async login(user: any) {
-    const payload = { 
-      email: user.email, 
-      sub: user.id, 
-      role: user.role, 
-      status: user.status 
-    };
-
-    return {
-      access_token: this.jwtService.sign(payload),
-    };
-  }
-
 
   async activateAccount(dto: ActivateAccountDto) {
     const user = await this.usersService.findByToken(dto.token);
-    if (!user) throw new UnauthorizedException('Token inválido.');
-
-    if (!user.tokenExpiresAt || new Date() > user.tokenExpiresAt) {
-      throw new UnauthorizedException('Token expirado. Solicite um novo.');
+    
+    // Mensagem genérica para segurança
+    if (!user || !user.tokenExpiresAt || new Date() > user.tokenExpiresAt) {
+      throw new UnauthorizedException('Link de ativação inválido ou expirado.');
     }
 
-    // --- [RN02] VALIDAÇÃO DE SENHA RIGOROSA ---
     const pass = dto.password;
+    this.validateStrongPassword(pass, user);
 
-    // 1. Pelo menos 8 caracteres
-    if (pass.length < 8) {
-      throw new BadRequestException('A senha deve ter pelo menos 8 caracteres.');
-    }
+    const hashedPassword = await bcrypt.hash(pass, 10); // Custo 10
+    return this.usersService.activateUser(user.id, hashedPassword);
+  }
 
-    // 2. Conter ao menos um número
-    if (!/\d/.test(pass)) {
-      throw new BadRequestException('A senha deve conter pelo menos um número.');
-    }
+  private validateStrongPassword(pass: string, user: any) {
+    if (pass.length < 8) throw new BadRequestException('A senha deve ter pelo menos 8 caracteres.');
+    if (!/\d/.test(pass)) throw new BadRequestException('A senha deve conter pelo menos um número.');
+    if (!/[a-zA-Z]/.test(pass)) throw new BadRequestException('A senha deve conter letras.');
+    if (/^\d+$/.test(pass)) throw new BadRequestException('A senha não pode ser composta apenas por números.');
 
-    // 3. Não pode ser puramente numérica
-    if (/^\d+$/.test(pass)) {
-      throw new BadRequestException('A senha não pode ser composta apenas por números.');
-    }
-
-    // 4. Não pode ser comum (Blacklist básica)
-    const commonPasswords = ['12345', '123456', 'senha123', 'admin', 'password', 'trocar123'];
+    const commonPasswords = ['12345', '123456', 'senha123', 'admin', 'password', 'trocar123', 'mudar123'];
     if (commonPasswords.includes(pass.toLowerCase())) {
       throw new BadRequestException('Esta senha é muito comum e insegura.');
     }
 
-    // 5. Similaridade com dados pessoais
     const lowerPass = pass.toLowerCase();
     const partsToCheck = [
-      user.name.split(' ')[0].toLowerCase(), // Primeiro nome
-      user.email.split('@')[0].toLowerCase(), // Parte do email antes do @
-      user.email,
-      user.name.toLowerCase()
+      user.email.split('@')[0].toLowerCase(),
+      user.name.split(' ')[0].toLowerCase(),
     ];
 
     for (const part of partsToCheck) {
-      if (lowerPass.includes(part)) {
+      if (part.length > 2 && lowerPass.includes(part)) {
         throw new BadRequestException('A senha não pode conter partes do seu nome ou e-mail.');
       }
     }
-
-    const hashedPassword = await bcrypt.hash(pass, 10);
-    return this.usersService.activateUser(user.id, hashedPassword);
   }
 }

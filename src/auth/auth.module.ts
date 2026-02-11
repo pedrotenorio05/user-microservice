@@ -3,29 +3,18 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { UsersModule } from '../users/users.module'; 
 import { PassportModule } from '@nestjs/passport';
-import { JwtModule } from '@nestjs/jwt';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config';
 import { JwtStrategy } from './jwt.strategy';
 import { InternalAuthController } from './internal-auth.controller';
 
 @Module({
   imports: [
-    UsersModule, // Para buscar usuários
+    UsersModule,
     PassportModule,
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET'),
-        signOptions: { 
-          // O TypeScript reclama se não fizermos esse cast, pois ele acha que string é "muito genérico"
-          expiresIn: configService.get('JWT_EXPIRATION') as any 
-        },
-      }),
-      inject: [ConfigService],
-    }),
+    ConfigModule,
   ],
   controllers: [AuthController, InternalAuthController],
   providers: [AuthService, JwtStrategy],
-  exports: [AuthService], // Exportamos caso outro módulo precise validar tokens
+  exports: [AuthService],
 })
 export class AuthModule {}
